@@ -1,5 +1,6 @@
 # Proyecto-Final-OAC
-Interrupciones 
+Interrupciones
+
 El objetivo de este proyecto es que los estudiantes comprendan y apliquen el concepto de interrupciones en el contexto de una aplicación de software. Los estudiantes deberán desarrollar un programa en cualquier lenguaje de programación que utilice interrupciones, crear un diagrama que muestre el flujo de control del proceso y completar una bitácora que documente el desarrollo y ejecución del programa.
 
 Requisitos del Proyecto:
