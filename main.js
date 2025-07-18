@@ -54,8 +54,6 @@ function agregarInterrupcion() {
     contador++;
 }
 
-// Versión completa integrada: iniciarSimulacion + generarCronograma
-
 function iniciarSimulacion() {
     const duracionBase = parseInt(document.getElementById("duracionPrograma").value);
     let duracionFinal = duracionBase;
@@ -176,6 +174,7 @@ function filaCronograma(inicio, fin, tipo, dispositivosUnicos) {
     fila += `</tr>`;
     return fila;
 }
+
 function generarBitacora(interrupciones, duracionBase) {
     const tiemposMonitoreo = document.getElementById("tiemposMonitoreo").value
         .split(",")
@@ -184,11 +183,11 @@ function generarBitacora(interrupciones, duracionBase) {
         .sort((a, b) => a - b);
 
     let html = `<table class="table table-bordered"><thead><tr>
-        <th>Tiempo real donde se desea monitorear el proceso</th>
-        <th>Área o dispositivo donde se encuentra en este momento el control del proceso</th>
-        <th>Interrupción afecta al dispositivo antes que culmine (SÍ / NO)</th>
-        <th>Rango de Tiempo en el dispositivo, con interrupción o sin ella. Cuándo entró y cuándo salió</th>
-        <th>Tiempo faltante para culminar la tarea (seg), si fue interrumpido</th>
+        <th>Tiempo monitoreo (s)</th>
+        <th>Dispositivo activo</th>
+        <th>Interrumpido antes de terminar</th>
+        <th>Rango de tiempo actual</th>
+        <th>Tiempo faltante si interrumpido</th>
     </tr></thead><tbody>`;
 
     tiemposMonitoreo.forEach(t => {
@@ -199,44 +198,45 @@ function generarBitacora(interrupciones, duracionBase) {
         let interrumpidoAntes = "NO";
         let tiempoFaltante = "-";
 
-        let tiempoProgramaEjecutado = 0;
-
         if (tramo) {
             dispositivo = tramo.tipo;
             rango = `T = ${tramo.inicio} → T = ${tramo.fin}`;
 
-            // calcular cuánto programa ya ejecutó hasta t
-            window.tramosCronograma.forEach(tr => {
-                if (tr.tipo === "Programa") {
-                    if (tr.fin <= t) {
-                        tiempoProgramaEjecutado += (tr.fin - tr.inicio);
-                    } else if (tr.inicio <= t && t < tr.fin) {
-                        tiempoProgramaEjecutado += (t - tr.inicio);
-                    }
-                }
-            });
+            if (dispositivo !== "Programa") {
+                // buscar si alguna interrupción con mayor prioridad lo interrumpió antes de terminar
+                const irqActual = IRQ_DISTRIBUCION.find(d => d.funcion.includes(dispositivo) || d.funcion === dispositivo);
+                const siguienteInterrupcion = window.tramosCronograma.find(next =>
+                    next.inicio > t && next.inicio < tramo.fin &&
+                    IRQ_DISTRIBUCION.find(d => d.funcion.includes(next.tipo) || d.funcion === next.tipo)?.prioridad < irqActual?.prioridad
+                );
 
-            if (tramo.tipo === "Programa") {
-                if (tiempoProgramaEjecutado < duracionBase) {
+                if (siguienteInterrupcion) {
                     interrumpidoAntes = "SÍ";
-                    tiempoFaltante = `${duracionBase - tiempoProgramaEjecutado}s`;
+                    tiempoFaltante = `${tramo.fin - siguienteInterrupcion.inicio}s`;
                 }
             } else {
-                const irq = IRQ_DISTRIBUCION.find(d => d.funcion.includes(tramo.tipo) || d.funcion === tramo.tipo);
-                const interrupcionMayor = interrupciones.find(int => {
-                    const irqInt = IRQ_DISTRIBUCION.find(d => d.funcion.includes(int.dispositivo) || d.funcion === int.dispositivo);
-                    return irqInt && irq && irqInt.prioridad < irq.prioridad && int.inicio > t && int.inicio < tramo.fin;
+                // Si es el programa, verificar si queda tiempo pendiente
+                let tiempoEjecutadoPrograma = 0;
+                window.tramosCronograma.forEach(tr => {
+                    if (tr.tipo === "Programa") {
+                        if (tr.fin <= t) {
+                            tiempoEjecutadoPrograma += (tr.fin - tr.inicio);
+                        } else if (tr.inicio <= t && t < tr.fin) {
+                            tiempoEjecutadoPrograma += (t - tr.inicio);
+                        }
+                    }
                 });
-                if (interrupcionMayor) {
+
+                if (tiempoEjecutadoPrograma < duracionBase) {
                     interrumpidoAntes = "SÍ";
-                    tiempoFaltante = `${tramo.fin - interrupcionMayor.inicio}s`;
+                    tiempoFaltante = `${duracionBase - tiempoEjecutadoPrograma}s`;
                 }
             }
         }
 
         html += `
         <tr>
-            <td>a los ${t} seg.</td>
+            <td>${t}</td>
             <td>${dispositivo}</td>
             <td>${interrumpidoAntes}</td>
             <td>${rango}</td>
