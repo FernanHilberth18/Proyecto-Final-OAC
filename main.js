@@ -101,9 +101,6 @@ function iniciarSimulacion() {
     document.getElementById("duracionTotal").innerText = `${ultimaSalida} segundos`;
 }
 
-// Versión final corregida de generarCronograma (sin test adicional)
-// Respeta prioridades al llegar nuevas interrupciones
-// Y siempre retoma la pendiente más prioritaria cuando termina la activa
 
 function generarCronograma(interrupciones, duracionPrograma) {
     let html = `<table class="table table-bordered"><thead><tr><th>Programa (s/p)</th>`;
@@ -119,14 +116,14 @@ function generarCronograma(interrupciones, duracionPrograma) {
     let eventos = interrupciones.map(i => ({ ...i }));
     eventos.sort((a, b) => a.inicio - b.inicio);
 
-    window.tramosCronograma = [];
-
     while (ejecutadoPrograma < duracionPrograma || eventos.length > 0 || pendientes.length > 0) {
         let siguienteEvento = eventos.length > 0 ? eventos[0] : null;
         let finActual = tiempo + enEjecucion.restante;
 
-        if (siguienteEvento && siguienteEvento.inicio < finActual) {
+        // Solo considerar interrupciones de mayor prioridad para cortar
+        if (siguienteEvento && siguienteEvento.inicio < finActual && siguienteEvento.prioridad < enEjecucion.prioridad) {
             let tramoDuracion = siguienteEvento.inicio - tiempo;
+            
             if (tramoDuracion > 0) {
                 if (enEjecucion.tipo === "Programa") ejecutadoPrograma += tramoDuracion;
                 html += filaCronograma(tiempo, tiempo + tramoDuracion, enEjecucion.tipo, dispositivosUnicos);
@@ -135,35 +132,51 @@ function generarCronograma(interrupciones, duracionPrograma) {
                 tiempo = siguienteEvento.inicio;
             }
 
-            if (siguienteEvento.prioridad < enEjecucion.prioridad) {
-                if (enEjecucion.tipo !== "Programa") pendientes.push({ ...enEjecucion });
-                enEjecucion = {
-                    tipo: siguienteEvento.dispositivo,
-                    prioridad: siguienteEvento.prioridad,
-                    restante: siguienteEvento.duracion
-                };
-            } else {
+            // Siempre encolar la tarea actual si no es programa
+            if (enEjecucion.tipo !== "Programa") pendientes.push({ ...enEjecucion });
+            
+            // Tomar la nueva interrupción
+            enEjecucion = {
+                tipo: siguienteEvento.dispositivo,
+                prioridad: siguienteEvento.prioridad,
+                restante: siguienteEvento.duracion
+            };
+            
+            eventos.shift();
+        } else {
+            let tramoDuracion = enEjecucion.restante;
+            
+            // Si hay un evento pendiente, ajustar el tiempo para no sobrepasar su inicio
+            if (siguienteEvento && siguienteEvento.inicio < tiempo + tramoDuracion) {
+                tramoDuracion = siguienteEvento.inicio - tiempo;
+            }
+
+            if (tramoDuracion > 0) {
+                if (enEjecucion.tipo === "Programa") ejecutadoPrograma += tramoDuracion;
+                html += filaCronograma(tiempo, tiempo + tramoDuracion, enEjecucion.tipo, dispositivosUnicos);
+                window.tramosCronograma.push({ tipo: enEjecucion.tipo, inicio: tiempo, fin: tiempo + tramoDuracion });
+                enEjecucion.restante -= tramoDuracion;
+                tiempo += tramoDuracion;
+            }
+
+            // Manejar transición después de completar un tramo
+            if (enEjecucion.restante <= 0) {
+                if (pendientes.length > 0) {
+                    pendientes.sort((a, b) => a.prioridad - b.prioridad);
+                    enEjecucion = pendientes.shift();
+                } else if (ejecutadoPrograma < duracionPrograma) {
+                    enEjecucion = { tipo: "Programa", prioridad: Infinity, restante: duracionPrograma - ejecutadoPrograma };
+                } else {
+                    break;
+                }
+            } else if (siguienteEvento && siguienteEvento.inicio <= tiempo) {
+                // Encolar eventos que llegaron durante la ejecución
                 pendientes.push({
                     tipo: siguienteEvento.dispositivo,
                     prioridad: siguienteEvento.prioridad,
                     restante: siguienteEvento.duracion
                 });
-            }
-            eventos.shift();
-        } else {
-            let tramoDuracion = enEjecucion.restante;
-            if (enEjecucion.tipo === "Programa") ejecutadoPrograma += tramoDuracion;
-            html += filaCronograma(tiempo, tiempo + tramoDuracion, enEjecucion.tipo, dispositivosUnicos);
-            window.tramosCronograma.push({ tipo: enEjecucion.tipo, inicio: tiempo, fin: tiempo + tramoDuracion });
-            tiempo += tramoDuracion;
-
-            if (pendientes.length > 0) {
-                pendientes.sort((a, b) => a.prioridad - b.prioridad);
-                enEjecucion = pendientes.shift();
-            } else if (ejecutadoPrograma < duracionPrograma) {
-                enEjecucion = { tipo: "Programa", prioridad: Infinity, restante: duracionPrograma - ejecutadoPrograma };
-            } else {
-                break;
+                eventos.shift();
             }
         }
     }
@@ -180,7 +193,6 @@ function filaCronograma(inicio, fin, tipo, dispositivosUnicos) {
     fila += `</tr>`;
     return fila;
 }
-
 
 function generarBitacora(interrupciones, duracionBase) {
     const tiemposMonitoreo = document.getElementById("tiemposMonitoreo").value
@@ -210,7 +222,6 @@ function generarBitacora(interrupciones, duracionBase) {
             rango = `T = ${tramo.inicio} → T = ${tramo.fin}`;
 
             if (dispositivo !== "Programa") {
-                // buscar si alguna interrupción con mayor prioridad lo interrumpió antes de terminar
                 const irqActual = IRQ_DISTRIBUCION.find(d => d.funcion.includes(dispositivo) || d.funcion === dispositivo);
                 const siguienteInterrupcion = window.tramosCronograma.find(next =>
                     next.inicio > t && next.inicio < tramo.fin &&
@@ -222,7 +233,6 @@ function generarBitacora(interrupciones, duracionBase) {
                     tiempoFaltante = `${tramo.fin - siguienteInterrupcion.inicio}s`;
                 }
             } else {
-                // Si es el programa, verificar si queda tiempo pendiente
                 let tiempoEjecutadoPrograma = 0;
                 window.tramosCronograma.forEach(tr => {
                     if (tr.tipo === "Programa") {
