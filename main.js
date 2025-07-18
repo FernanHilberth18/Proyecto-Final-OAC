@@ -23,6 +23,15 @@ const dispositivosValidos = [
     "Red", "Sonido", "Puerto SCSI", "PS-mouse", "Co-procesador matemático", "Disco"
 ];
 
+// Mapa genérico para nombres de dispositivos
+const deviceDisplayMap = {
+    "Controlador Floppy - Diskette": "Controlador Floppy",
+    "Co-procesador matemático": "Co-procesador matemático",
+    "Reloj (tics) en tiempo real CMOS": "Reloj CMOS",
+    "Puerto Paralelo - Impresora": "Impresora",
+    "Canal IDE primario (Disco)": "Disco"
+};
+
 let contador = 0;
 let duracionFinal = 0;
 
@@ -56,7 +65,7 @@ function agregarInterrupcion() {
 
 function iniciarSimulacion() {
     const duracionBase = parseInt(document.getElementById("duracionPrograma").value);
-    let duracionFinal = duracionBase;
+    duracionFinal = duracionBase;
 
     const tiemposMonitoreoInput = document.getElementById("tiemposMonitoreo").value;
     window.tiemposMonitoreo = tiemposMonitoreoInput.split(",").map(v => parseInt(v.trim())).filter(v => !isNaN(v));
@@ -92,15 +101,14 @@ function iniciarSimulacion() {
         });
     }
 
-    window.tramosCronograma = []; // inicializa
+    window.tramosCronograma = [];
 
     document.getElementById("cronograma").innerHTML = generarCronograma(interrupciones, duracionBase);
-    document.getElementById("bitacora").innerHTML = generarBitacora(interrupciones, duracionBase);
+    document.getElementById("bitacora").innerHTML = generarBitacora(interrupciones);
 
     const ultimaSalida = window.tramosCronograma.at(-1)?.fin || duracionBase;
     document.getElementById("duracionTotal").innerText = `${ultimaSalida} segundos`;
 }
-
 
 function generarCronograma(interrupciones, duracionPrograma) {
     let html = `<table class="table table-bordered"><thead><tr><th>Programa (s/p)</th>`;
@@ -116,75 +124,85 @@ function generarCronograma(interrupciones, duracionPrograma) {
     let eventos = interrupciones.map(i => ({ ...i }));
     eventos.sort((a, b) => a.inicio - b.inicio);
 
-    window.tramosCronograma = []; // Reiniciamos para cada nueva simulación
+    // Esta sigue siendo la lista cruda, para bitácora
+    window.tramosCronograma = [];
 
-    while (ejecutadoPrograma < duracionPrograma || eventos.length > 0 || pendientes.length > 0) {
-        let siguienteEvento = eventos.length > 0 ? eventos[0] : null;
-        let finActual = tiempo + enEjecucion.restante;
-
-        // Solo considerar interrupciones de mayor prioridad para cortar
-        if (siguienteEvento && siguienteEvento.inicio < finActual && siguienteEvento.prioridad < enEjecucion.prioridad) {
-            let tramoDuracion = siguienteEvento.inicio - tiempo;
-            
-            if (tramoDuracion > 0) {
-                if (enEjecucion.tipo === "Programa") ejecutadoPrograma += tramoDuracion;
-                html += filaCronograma(tiempo, tiempo + tramoDuracion, enEjecucion.tipo, dispositivosUnicos);
-                window.tramosCronograma.push({ tipo: enEjecucion.tipo, inicio: tiempo, fin: tiempo + tramoDuracion });
-                enEjecucion.restante -= tramoDuracion;
-                tiempo = siguienteEvento.inicio;
-            }
-
-            // Siempre encolar la tarea actual si no es programa
-            if (enEjecucion.tipo !== "Programa") pendientes.push({ ...enEjecucion });
-            
-            // Tomar la nueva interrupción
-            enEjecucion = {
-                tipo: siguienteEvento.dispositivo,
-                prioridad: siguienteEvento.prioridad,
-                restante: siguienteEvento.duracion
-            };
-            
+    while (ejecutadoPrograma < duracionPrograma || eventos.length > 0 || pendientes.length > 0 || enEjecucion) {
+        while (eventos.length > 0 && eventos[0].inicio <= tiempo) {
+            pendientes.push({
+                tipo: eventos[0].dispositivo,
+                prioridad: eventos[0].prioridad,
+                restante: eventos[0].duracion,
+                inicioOriginal: eventos[0].inicio
+            });
             eventos.shift();
-        } else {
-            let tramoDuracion = enEjecucion.restante;
-            
-            // Si hay un evento pendiente, ajustar el tiempo para no sobrepasar su inicio
-            if (siguienteEvento && siguienteEvento.inicio < tiempo + tramoDuracion) {
-                tramoDuracion = siguienteEvento.inicio - tiempo;
-            }
+        }
 
-            if (tramoDuracion > 0) {
-                if (enEjecucion.tipo === "Programa") ejecutadoPrograma += tramoDuracion;
-                html += filaCronograma(tiempo, tiempo + tramoDuracion, enEjecucion.tipo, dispositivosUnicos);
-                window.tramosCronograma.push({ tipo: enEjecucion.tipo, inicio: tiempo, fin: tiempo + tramoDuracion });
-                enEjecucion.restante -= tramoDuracion;
-                tiempo += tramoDuracion;
-            }
+        if (enEjecucion && enEjecucion.restante > 0) {
+            let pendientePrioritaria = pendientes.find(p => p.prioridad < enEjecucion.prioridad);
 
-            // Manejar transición después de completar un tramo
-            if (enEjecucion.restante <= 0) {
-                if (pendientes.length > 0) {
-                    pendientes.sort((a, b) => a.prioridad - b.prioridad);
-                    enEjecucion = pendientes.shift();
-                } else if (ejecutadoPrograma < duracionPrograma) {
-                    enEjecucion = { tipo: "Programa", prioridad: Infinity, restante: duracionPrograma - ejecutadoPrograma };
-                } else {
-                    break;
+            if (pendientePrioritaria) {
+                let duracionTramo = pendientePrioritaria.inicioOriginal - tiempo;
+
+                if (duracionTramo > 0) {
+                    registrarTramo(tiempo, tiempo + duracionTramo, enEjecucion.tipo);
+                    if (enEjecucion.tipo === "Programa") ejecutadoPrograma += duracionTramo;
+                    enEjecucion.restante -= duracionTramo;
+                    tiempo += duracionTramo;
                 }
-            } else if (siguienteEvento && siguienteEvento.inicio <= tiempo) {
-                // Encolar eventos que llegaron durante la ejecución
-                pendientes.push({
-                    tipo: siguienteEvento.dispositivo,
-                    prioridad: siguienteEvento.prioridad,
-                    restante: siguienteEvento.duracion
-                });
-                eventos.shift();
+
+                pendientes.push({ ...enEjecucion });
+                pendientes.sort((a, b) => a.prioridad - b.prioridad);
+                enEjecucion = pendientes.shift();
+            } else {
+                let siguienteEventoTiempo = eventos.length > 0 ? eventos[0].inicio : Infinity;
+                let siguienteCambioTiempo = Math.min(tiempo + enEjecucion.restante, siguienteEventoTiempo);
+
+                registrarTramo(tiempo, siguienteCambioTiempo, enEjecucion.tipo);
+                if (enEjecucion.tipo === "Programa") ejecutadoPrograma += (siguienteCambioTiempo - tiempo);
+                enEjecucion.restante -= (siguienteCambioTiempo - tiempo);
+                tiempo = siguienteCambioTiempo;
+
+                if (enEjecucion.restante <= 0) {
+                    enEjecucion = null;
+                }
+            }
+        } else {
+            if (pendientes.length > 0) {
+                pendientes.sort((a, b) => a.prioridad - b.prioridad);
+                enEjecucion = pendientes.shift();
+            } else if (ejecutadoPrograma < duracionPrograma) {
+                enEjecucion = { tipo: "Programa", prioridad: Infinity, restante: duracionPrograma - ejecutadoPrograma };
+            } else {
+                break;
             }
         }
     }
 
+    // Agrupar solo para visualización
+    const tramosAgrupados = [];
+    for (let tramo of window.tramosCronograma) {
+        if (
+            tramosAgrupados.length > 0 &&
+            tramosAgrupados[tramosAgrupados.length - 1].tipo === tramo.tipo
+        ) {
+            tramosAgrupados[tramosAgrupados.length - 1].fin = tramo.fin;
+        } else {
+            tramosAgrupados.push({ ...tramo });
+        }
+    }
+
+    // Renderizar tabla con los tramos agrupados
+    tramosAgrupados.forEach(tr => {
+        html += filaCronograma(tr.inicio, tr.fin, tr.tipo, dispositivosUnicos);
+    });
+
     html += `</tbody></table>`;
     return html;
+}
+
+function registrarTramo(inicio, fin, tipo) {
+    window.tramosCronograma.push({ tipo, inicio, fin });
 }
 
 function filaCronograma(inicio, fin, tipo, dispositivosUnicos) {
@@ -196,12 +214,10 @@ function filaCronograma(inicio, fin, tipo, dispositivosUnicos) {
     return fila;
 }
 
-function generarBitacora(interrupciones, duracionBase) {
-    const tiemposMonitoreo = document.getElementById("tiemposMonitoreo").value
-        .split(",")
-        .map(t => parseInt(t.trim()))
-        .filter(t => !isNaN(t))
-        .sort((a, b) => a - b);
+
+
+function generarBitacora() {
+    const tiemposMonitoreo = window.tiemposMonitoreo.sort((a, b) => a - b);
 
     let html = `<table class="table table-bordered"><thead><tr>
         <th>Tiempo monitoreo (s)</th>
@@ -211,94 +227,68 @@ function generarBitacora(interrupciones, duracionBase) {
         <th>Tiempo faltante si interrumpido</th>
     </tr></thead><tbody>`;
 
+    const interrupcionesOriginales = Array.from(document.querySelectorAll('#interrupciones > div')).map((div, i) => {
+        const disp = div.querySelector(`#disp${i}`).value;
+        const inicio = parseInt(div.querySelector(`#inicio${i}`).value);
+        const duracion = parseInt(div.querySelector(`#duracion${i}`).value);
+        return { disp, inicio, duracion };
+    });
+
+    const duracionPrograma = parseInt(document.getElementById("duracionPrograma").value);
+
     tiemposMonitoreo.forEach(t => {
         const tramo = window.tramosCronograma.find(tr => t >= tr.inicio && t < tr.fin);
 
         let dispositivo = "-";
         let rango = "-";
-        let interrumpidoAntes = "NO";
-        let tiempoFaltante = "-";
+        let interrumpido = "NO";
+        let faltante = "-";
 
         if (tramo) {
             dispositivo = tramo.tipo;
             rango = `T = ${tramo.inicio} → T = ${tramo.fin}`;
 
             if (dispositivo !== "Programa") {
-                // Buscar IRQ correspondiente al dispositivo
-                let irqActual;
-                if (["COM1", "COM3"].includes(dispositivo)) {
-                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 4);
-                } else if (["COM2", "COM4"].includes(dispositivo)) {
-                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 3);
-                } else if (["Red", "Sonido", "Puerto SCSI"].includes(dispositivo)) {
-                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 9);
-                } else if (dispositivo === "Disco") {
-                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 14);
-                } else {
-                    irqActual = IRQ_DISTRIBUCION.find(d => d.funcion === dispositivo);
-                }
+                // Encontrar la interrupción original correspondiente
+                const interrupcionOriginal = interrupcionesOriginales.find(i => i.disp === dispositivo && i.inicio <= t && t < i.inicio + i.duracion);
 
-                // Buscar si hay una interrupción de mayor prioridad en este tramo
-                const siguienteInterrupcion = window.tramosCronograma.find(next =>
-                    next.inicio > t && 
-                    next.inicio < tramo.fin &&
-                    next.tipo !== dispositivo
-                );
-                
-                if (siguienteInterrupcion) {
-                    // Buscar prioridad de la siguiente interrupción
-                    let irqSiguiente;
-                    if (["COM1", "COM3"].includes(siguienteInterrupcion.tipo)) {
-                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 4);
-                    } else if (["COM2", "COM4"].includes(siguienteInterrupcion.tipo)) {
-                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 3);
-                    } else if (["Red", "Sonido", "Puerto SCSI"].includes(siguienteInterrupcion.tipo)) {
-                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 9);
-                    } else if (siguienteInterrupcion.tipo === "Disco") {
-                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 14);
-                    } else {
-                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.funcion === siguienteInterrupcion.tipo);
-                    }
+                if (interrupcionOriginal) {
+                    const tramosMismaInterrupcion = window.tramosCronograma
+                        .filter(tr => tr.tipo === dispositivo && tr.inicio >= interrupcionOriginal.inicio && tr.inicio < interrupcionOriginal.inicio + interrupcionOriginal.duracion);
 
-                    // Comparar prioridades
-                    if (irqActual && irqSiguiente && irqSiguiente.prioridad < irqActual.prioridad) {
-                        interrumpidoAntes = "SÍ";
-                        tiempoFaltante = `${tramo.fin - siguienteInterrupcion.inicio}s`;
+                    const tiempoEjecutado = tramosMismaInterrupcion.reduce((acc, tr) => acc + (tr.fin - tr.inicio), 0);
+
+                    if (tiempoEjecutado < interrupcionOriginal.duracion) {
+                        interrumpido = "SÍ";
+                        faltante = `${interrupcionOriginal.duracion - tiempoEjecutado}s`;
                     }
                 }
             } else {
-                // Para el programa principal
-                let tiempoEjecutadoPrograma = 0;
-                window.tramosCronograma.forEach(tr => {
-                    if (tr.tipo === "Programa") {
-                        if (tr.fin <= t) {
-                            tiempoEjecutadoPrograma += (tr.fin - tr.inicio);
-                        } else if (tr.inicio <= t && t < tr.fin) {
-                            tiempoEjecutadoPrograma += (t - tr.inicio);
-                        }
-                    }
-                });
+                // Para Programa
+                const ejecutadoHastaAqui = window.tramosCronograma
+                    .filter(tr => tr.tipo === "Programa" && tr.inicio < tramo.fin)
+                    .reduce((acc, tr) => acc + (tr.fin - tr.inicio), 0);
 
-                if (tiempoEjecutadoPrograma < duracionBase) {
-                    interrumpidoAntes = "SÍ";
-                    tiempoFaltante = `${duracionBase - tiempoEjecutadoPrograma}s`;
+                if (ejecutadoHastaAqui < duracionPrograma) {
+                    interrumpido = "SÍ";
+                    faltante = `${duracionPrograma - ejecutadoHastaAqui}s`;
                 }
             }
         }
 
-        html += `
-        <tr>
+        html += `<tr>
             <td>${t}</td>
             <td>${dispositivo}</td>
-            <td>${interrumpidoAntes}</td>
+            <td>${interrumpido}</td>
             <td>${rango}</td>
-            <td>${tiempoFaltante}</td>
+            <td>${faltante}</td>
         </tr>`;
     });
 
     html += `</tbody></table>`;
     return html;
 }
+
 
 function exportarPDF() {
     const { jsPDF } = window.jspdf;
@@ -405,12 +395,14 @@ function exportarPDF() {
         }
     });
 
-    // Duración Total
+    // Duración Total (real, incluyendo interrupciones)
+    const duracionTotalReal = Math.max(...window.tramosCronograma.map(tr => tr.fin));
+
     doc.addPage();
     doc.setFontSize(16);
     doc.text("Duración Total del Proceso", 14, 20);
     doc.setFontSize(14);
-    doc.text(`${duracionFinal} segundos`, 14, 30);
+    doc.text(`${duracionTotalReal} segundos`, 14, 30);
 
     doc.save("Simulacion_Interrupciones.pdf");
 }
