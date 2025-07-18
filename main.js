@@ -116,6 +116,8 @@ function generarCronograma(interrupciones, duracionPrograma) {
     let eventos = interrupciones.map(i => ({ ...i }));
     eventos.sort((a, b) => a.inicio - b.inicio);
 
+    window.tramosCronograma = []; // Reiniciamos para cada nueva simulación
+
     while (ejecutadoPrograma < duracionPrograma || eventos.length > 0 || pendientes.length > 0) {
         let siguienteEvento = eventos.length > 0 ? eventos[0] : null;
         let finActual = tiempo + enEjecucion.restante;
@@ -222,17 +224,50 @@ function generarBitacora(interrupciones, duracionBase) {
             rango = `T = ${tramo.inicio} → T = ${tramo.fin}`;
 
             if (dispositivo !== "Programa") {
-                const irqActual = IRQ_DISTRIBUCION.find(d => d.funcion.includes(dispositivo) || d.funcion === dispositivo);
-                const siguienteInterrupcion = window.tramosCronograma.find(next =>
-                    next.inicio > t && next.inicio < tramo.fin &&
-                    IRQ_DISTRIBUCION.find(d => d.funcion.includes(next.tipo) || d.funcion === next.tipo)?.prioridad < irqActual?.prioridad
-                );
+                // Buscar IRQ correspondiente al dispositivo
+                let irqActual;
+                if (["COM1", "COM3"].includes(dispositivo)) {
+                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 4);
+                } else if (["COM2", "COM4"].includes(dispositivo)) {
+                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 3);
+                } else if (["Red", "Sonido", "Puerto SCSI"].includes(dispositivo)) {
+                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 9);
+                } else if (dispositivo === "Disco") {
+                    irqActual = IRQ_DISTRIBUCION.find(d => d.irq === 14);
+                } else {
+                    irqActual = IRQ_DISTRIBUCION.find(d => d.funcion === dispositivo);
+                }
 
+                // Buscar si hay una interrupción de mayor prioridad en este tramo
+                const siguienteInterrupcion = window.tramosCronograma.find(next =>
+                    next.inicio > t && 
+                    next.inicio < tramo.fin &&
+                    next.tipo !== dispositivo
+                );
+                
                 if (siguienteInterrupcion) {
-                    interrumpidoAntes = "SÍ";
-                    tiempoFaltante = `${tramo.fin - siguienteInterrupcion.inicio}s`;
+                    // Buscar prioridad de la siguiente interrupción
+                    let irqSiguiente;
+                    if (["COM1", "COM3"].includes(siguienteInterrupcion.tipo)) {
+                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 4);
+                    } else if (["COM2", "COM4"].includes(siguienteInterrupcion.tipo)) {
+                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 3);
+                    } else if (["Red", "Sonido", "Puerto SCSI"].includes(siguienteInterrupcion.tipo)) {
+                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 9);
+                    } else if (siguienteInterrupcion.tipo === "Disco") {
+                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.irq === 14);
+                    } else {
+                        irqSiguiente = IRQ_DISTRIBUCION.find(d => d.funcion === siguienteInterrupcion.tipo);
+                    }
+
+                    // Comparar prioridades
+                    if (irqActual && irqSiguiente && irqSiguiente.prioridad < irqActual.prioridad) {
+                        interrumpidoAntes = "SÍ";
+                        tiempoFaltante = `${tramo.fin - siguienteInterrupcion.inicio}s`;
+                    }
                 }
             } else {
+                // Para el programa principal
                 let tiempoEjecutadoPrograma = 0;
                 window.tramosCronograma.forEach(tr => {
                     if (tr.tipo === "Programa") {
