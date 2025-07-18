@@ -222,35 +222,37 @@ function generarBitacora(interrupciones, duracionBase) {
         let interrumpidoAntes = "NO";
         let tiempoFaltante = "-";
 
+        let tiempoProgramaEjecutado = 0;
+
         if (tramo) {
             dispositivo = tramo.tipo;
             rango = `T = ${tramo.inicio} → T = ${tramo.fin}`;
 
-            // Buscar si fue interrumpido antes de completar su duración natural
-            const siguienteTramo = window.tramosCronograma.find(
-                tr => tr.inicio >= tramo.inicio && tr.inicio < tramo.fin && tr !== tramo
-            );
-
-            if (siguienteTramo && siguienteTramo.inicio < tramo.fin) {
-                interrumpidoAntes = "SÍ";
-                tiempoFaltante = `${tramo.fin - siguienteTramo.inicio}s`;
-            }
+            // calcular cuánto programa ya ejecutó hasta t
+            window.tramosCronograma.forEach(tr => {
+                if (tr.tipo === "Programa") {
+                    if (tr.fin <= t) {
+                        tiempoProgramaEjecutado += (tr.fin - tr.inicio);
+                    } else if (tr.inicio <= t && t < tr.fin) {
+                        tiempoProgramaEjecutado += (t - tr.inicio);
+                    }
+                }
+            });
 
             if (tramo.tipo === "Programa") {
-                // Calcular cuánto le falta al programa completo
-                let ejecutado = 0;
-                window.tramosCronograma.forEach(tr => {
-                    if (tr.tipo === "Programa") {
-                        if (tr.fin <= t) {
-                            ejecutado += (tr.fin - tr.inicio);
-                        } else if (tr.inicio <= t && t < tr.fin) {
-                            ejecutado += (t - tr.inicio);
-                        }
-                    }
-                });
-                if (ejecutado < duracionBase) {
+                if (tiempoProgramaEjecutado < duracionBase) {
                     interrumpidoAntes = "SÍ";
-                    tiempoFaltante = `${duracionBase - ejecutado}s`;
+                    tiempoFaltante = `${duracionBase - tiempoProgramaEjecutado}s`;
+                }
+            } else {
+                const irq = IRQ_DISTRIBUCION.find(d => d.funcion.includes(tramo.tipo) || d.funcion === tramo.tipo);
+                const interrupcionMayor = interrupciones.find(int => {
+                    const irqInt = IRQ_DISTRIBUCION.find(d => d.funcion.includes(int.dispositivo) || d.funcion === int.dispositivo);
+                    return irqInt && irq && irqInt.prioridad < irq.prioridad && int.inicio > t && int.inicio < tramo.fin;
+                });
+                if (interrupcionMayor) {
+                    interrumpidoAntes = "SÍ";
+                    tiempoFaltante = `${tramo.fin - interrupcionMayor.inicio}s`;
                 }
             }
         }
@@ -268,7 +270,6 @@ function generarBitacora(interrupciones, duracionBase) {
     html += `</tbody></table>`;
     return html;
 }
-
 
 function exportarPDF() {
     const { jsPDF } = window.jspdf;
