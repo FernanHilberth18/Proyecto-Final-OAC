@@ -101,7 +101,9 @@ function iniciarSimulacion() {
     document.getElementById("duracionTotal").innerText = `${ultimaSalida} segundos`;
 }
 
-// Versión final mejorada: respeta prioridades incluso cuando llegan interrupciones de menor prioridad
+// Versión final corregida de generarCronograma (sin test adicional)
+// Respeta prioridades al llegar nuevas interrupciones
+// Y siempre retoma la pendiente más prioritaria cuando termina la activa
 
 function generarCronograma(interrupciones, duracionPrograma) {
     let html = `<table class="table table-bordered"><thead><tr><th>Programa (s/p)</th>`;
@@ -116,6 +118,8 @@ function generarCronograma(interrupciones, duracionPrograma) {
 
     let eventos = interrupciones.map(i => ({ ...i }));
     eventos.sort((a, b) => a.inicio - b.inicio);
+
+    window.tramosCronograma = [];
 
     while (ejecutadoPrograma < duracionPrograma || eventos.length > 0 || pendientes.length > 0) {
         let siguienteEvento = eventos.length > 0 ? eventos[0] : null;
@@ -139,7 +143,6 @@ function generarCronograma(interrupciones, duracionPrograma) {
                     restante: siguienteEvento.duracion
                 };
             } else {
-                // Si la nueva interrupción tiene menor o igual prioridad, solo encolarla
                 pendientes.push({
                     tipo: siguienteEvento.dispositivo,
                     prioridad: siguienteEvento.prioridad,
@@ -155,7 +158,6 @@ function generarCronograma(interrupciones, duracionPrograma) {
             tiempo += tramoDuracion;
 
             if (pendientes.length > 0) {
-                // Siempre elegir la más prioritaria entre las pendientes
                 pendientes.sort((a, b) => a.prioridad - b.prioridad);
                 enEjecucion = pendientes.shift();
             } else if (ejecutadoPrograma < duracionPrograma) {
